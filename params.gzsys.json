@@ -1,5 +1,4 @@
 {
-    "gzsys_root": "/share/data7/Project/xujm/MIDASv3",
     "genomes_tsv_path": "/share/data7/Project/xujm/MIDASv3/inputs/genomes.tsv",
     "db_name": "prome_midas",
     "db_output_dir": "/share/data7/Project/xujm/MIDASv3/results",
@@ -7,8 +6,5 @@
     "genomad_db_dir": "/share/data7/Project/xujm/MIDASv3/databases/genomad",
     "resfinder_db_dir": "/share/data7/Project/xujm/MIDASv3/databases/resfinder",
     "download_databases": false,
-    "gzsys_queue": "all.q",
-    "gzsys_penv": "smp",
-    "gzsys_queue_size": 3,
     "gzsys_min_free_gb": 100
 }

@@ -20,7 +20,7 @@ To save time during execution and ensure stability on HPC clusters, run the preb
 bash bin/prebuild_conda_envs.sh
 ```
 
-> **Note:** The default command modifies `conf/conda_envs.config`. To preserve the checkout, pass `--config-out /absolute/path/conda.config` and select it with `--conda_envs_config /absolute/path/conda.config`.
+> **Note:** The default command modifies `conf/conda_envs.config`. To preserve the checkout, pass `--config-out /absolute/path/conda.config` and include the generated file from your explicit deployment config.
 
 ### 3. HPC Configuration
 
@@ -123,9 +123,12 @@ including retries. This is intentionally conservative because this cluster's
 headroom before increasing concurrency or memory. A terminated task fails the
 workflow after the bounded retries; the profile does not ignore failed builds.
 
-`params.gzsys.json` is a deployment template, not evidence that its directories or
-databases already exist. It places data below `/share/data7/Project/xujm/MIDASv3`.
-Edit it for the intended run, and use absolute shared paths for the checkout,
+`params.gzsys.json` contains pipeline inputs, outputs and database paths.
+`gzsys.config` is the explicit deployment template for `workDir`, `conda.cacheDir`,
+`executor.queueSize`, queue, parallel environment and optional prebuilt Conda
+selectors. Copy and edit both files for the run. The templates use
+`/share/data7/Project/xujm/MIDASv3`; their presence does not prove that these
+directories or databases exist. Use absolute shared paths for the checkout,
 inputs, work, results, databases and environments. These paths must be visible
 under the same names on every selected compute node. Preserve the launch
 directory's `.nextflow` cache and shared `work` directory to resume a run.
@@ -149,9 +152,11 @@ bash bin/prebuild_conda_envs.sh \
   --config-out /share/data7/Project/xujm/MIDASv3/conda.config
 ```
 
-Add `"conda_envs_config": "/share/data7/Project/xujm/MIDASv3/conda.config"` to the
-run's JSON to select those environments. Without this parameter, Nextflow creates
-environments on demand in the profile's shared Conda cache. The prebuild script
+Uncomment `includeConfig '/share/data7/Project/xujm/MIDASv3/conda.config'` in the
+run's deployment config to select those environments. Without that include,
+Nextflow creates environments on demand in the shared Conda cache. Existing
+prefixes must contain `conda-meta/history`; incomplete prefixes cause a failure
+and are preserved for inspection. Rebuilding them requires an explicit `--force`. The prebuild script
 checks out no code and submits no scheduler jobs. `--force` removes and rebuilds
 only its named environment prefixes; avoid it for environments used by live jobs.
 
@@ -174,19 +179,30 @@ After copying the checkout and preparing the inputs and databases, run from a
 dedicated launch directory on shared storage:
 
 ```bash
-# Read-only login-node checks: required commands, paths, disk space and base config.
-bash /path/to/checkout/bin/run_gzsys.sh --check /path/to/run-params.json
+# Read-only login-node checks, including the final effective execution configuration.
+bash /path/to/checkout/bin/run_gzsys.sh --check /path/to/run-params.json /path/to/deploy.config
 
 # Validate the input TSV and compile the complete workflow; submit no jobs.
 # Nextflow writes its log/cache metadata in the launch directory.
-bash /path/to/checkout/bin/run_gzsys.sh --preview /path/to/run-params.json
+bash /path/to/checkout/bin/run_gzsys.sh --preview /path/to/run-params.json /path/to/deploy.config
 
 # Submit the real workflow only after checking all compute-node paths.
-bash /path/to/checkout/bin/run_gzsys.sh --run /path/to/run-params.json
+bash /path/to/checkout/bin/run_gzsys.sh --run /path/to/run-params.json /path/to/deploy.config
 
 # Resume from the same launch directory with the same retained work/cache.
-bash /path/to/checkout/bin/run_gzsys.sh --run /path/to/run-params.json -resume
+bash /path/to/checkout/bin/run_gzsys.sh --run /path/to/run-params.json /path/to/deploy.config -resume
 ```
+
+Inspection and execution use the identical explicit configuration set:
+`-C /path/to/checkout/nextflow.config,/path/to/deploy.config -profile gzsys`.
+Home and launch-directory configs are excluded. The check inspects Nextflow's
+JSON configuration output, prints the effective work/cache directories, queue,
+parallel environment, concurrency and Conda overrides, and validates referenced
+prefix markers. Extra execution overrides are rejected by the launcher; only
+`-resume [SESSION]` is accepted for a run. Move the old JSON keys `gzsys_root`,
+`gzsys_queue`, `gzsys_penv`, `gzsys_queue_size` and `conda_envs_config` into native
+execution settings in the deployment config; the preflight rejects those old
+keys so it cannot validate one set of settings and run another.
 
 The genome TSV requires one representative per species, consistent
 `representative` values and unique genome IDs. IDs accept letters, numbers, dots,

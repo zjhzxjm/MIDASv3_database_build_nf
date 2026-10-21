@@ -4,6 +4,7 @@ Nextflow tests use NXF_OFFLINE=true and an isolated temporary launch directory.
 No biological tools, downloads or real scheduler jobs are used.
 """
 import importlib.util
+import json
 import os
 from pathlib import Path
 import shutil
@@ -21,28 +22,36 @@ spec.loader.exec_module(preflight)
 
 
 class PreflightTests(unittest.TestCase):
+    def effective(self):
+        return {'workDir': '/share/midas-test/work',
+                'conda': {'enabled': True, 'cacheDir': '/share/midas-test/conda'},
+                'executor': {'queueSize': 3},
+                'process': {'executor': 'sge', 'queue': 'all.q', 'penv': 'smp'}}
+
     def test_rejects_nonshared_paths(self):
-        errors = preflight.check({'gzsys_root': '/tmp/midas'})
-        self.assertTrue(any('gzsys_root' in error for error in errors))
+        errors = preflight.check({'db_output_dir': '/tmp/midas'}, self.effective())
+        self.assertTrue(any('db_output_dir' in error for error in errors))
 
     def test_missing_databases_fail_before_submission(self):
         params = {name: '/share/midas-test/missing' for name in (
-            'gzsys_root', 'db_output_dir', 'eggnog_db_dir', 'genomad_db_dir',
+            'db_output_dir', 'eggnog_db_dir', 'genomad_db_dir',
             'resfinder_db_dir', 'genomes_tsv_path')}
         with patch.object(preflight.shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(1, 0, 200 * 1024**3)):
             with contextlib.redirect_stdout(io.StringIO()):
-                errors = preflight.check(params)
+                errors = preflight.check(params, self.effective())
         self.assertTrue(any('database component' in error for error in errors))
 
     def test_large_concurrency_rejected_for_initial_acceptance(self):
         params = {name: '/share/midas-test/missing' for name in (
-            'gzsys_root', 'db_output_dir', 'eggnog_db_dir', 'genomad_db_dir',
+            'db_output_dir', 'eggnog_db_dir', 'genomad_db_dir',
             'resfinder_db_dir', 'genomes_tsv_path')}
-        params.update(download_databases=True, gzsys_queue_size=12)
+        params.update(download_databases=True)
+        effective = self.effective()
+        effective['executor']['queueSize'] = 12
         with patch.object(preflight.shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(1, 0, 200 * 1024**3)):
             with contextlib.redirect_stdout(io.StringIO()):
-                errors = preflight.check(params)
-        self.assertTrue(any('gzsys_queue_size' in error for error in errors))
+                errors = preflight.check(params, effective)
+        self.assertTrue(any('executor.queueSize' in error for error in errors))
 
 
 class PrebuildTests(unittest.TestCase):
@@ -64,6 +73,16 @@ class PrebuildTests(unittest.TestCase):
             self.assertEqual((ROOT / 'conf/conda_envs.config').read_bytes(), original)
             self.assertIn("withName: 'ClusterCentroidsLowerThresholds'", config.read_text())
             self.assertIn(str(root / 'envs/prokka'), config.read_text())
+            # Simulate an interrupted install. It must not be reused or overwrite the config.
+            before = config.read_bytes()
+            (root / 'envs/python-bio/conda-meta/history').unlink()
+            repeated = subprocess.run(['bash', str(ROOT / 'bin/prebuild_conda_envs.sh'),
+                                       '--env-dir', str(root / 'envs'), '--config-out', str(config)],
+                                      env=env, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(repeated.returncode, 0)
+            self.assertIn('Incomplete Conda environment', repeated.stderr)
+            self.assertEqual(config.read_bytes(), before)
+
 
 
 class PipelineFailureTests(unittest.TestCase):
@@ -127,8 +146,10 @@ class NextflowTests(unittest.TestCase):
         # Bundled TSV paths are launch-relative, so use a temporary TSV with absolute FASTAs.
         tsv = self.path / 'absolute.tsv'
         tsv.write_text((ROOT / 'testing/inputs/genomes.tsv').read_text().replace('./testing/', str(ROOT / 'testing') + '/'))
-        result = self.nf('run', ROOT / 'main.nf', '-profile', 'gzsys',
-                         '--genomes_tsv_path', tsv, '--gzsys_root', self.path,
+        deployment = self.path / 'prepared.config'
+        deployment.write_text(f"workDir = '{self.path}/prepared-work'\n")
+        result = self.nf('-c', deployment, 'run', ROOT / 'main.nf', '-profile', 'gzsys',
+                         '--genomes_tsv_path', tsv,
                          '--eggnog_db_dir', self.path / 'eggnog',
                          '--genomad_db_dir', self.path / 'genomad',
                          '--resfinder_db_dir', self.path / 'resfinder', '-preview')
@@ -159,6 +180,40 @@ class NextflowTests(unittest.TestCase):
         self.assertNotIn('h_vmem', result.stdout)
         self.assertNotIn('h_rss=', result.stdout)  # emitted by SgeExecutor, not clusterOptions
         self.assertNotIn('WARN:', result.stdout + result.stderr)
+
+    def test_deployment_overrides_are_effective_in_config_and_run(self):
+        external = self.path / 'conda.config'
+        prefix = self.path / 'custom-prokka'
+        (prefix / 'conda-meta').mkdir(parents=True)
+        (prefix / 'conda-meta/history').touch()
+        external.write_text(f"process {{ withName: AnnotateGenomes {{ conda = '{prefix}' }} }}\n")
+        deploy = self.path / 'deploy.config'
+        deploy.write_text(f"""workDir = '{self.path}/custom-work'
+conda.cacheDir = '{self.path}/custom-cache'
+executor.queueSize = 1
+process.queue = 'review.q'
+process.penv = 'review_smp'
+includeConfig '{external}'
+""")
+        sources = f'{ROOT}/nextflow.config,{deploy}'
+        result = self.nf('-C', sources, 'config', ROOT, '-profile', 'gzsys', '-o', 'json')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        effective = json.loads(result.stdout)
+        self.assertEqual(effective['workDir'], str(self.path / 'custom-work'))
+        self.assertEqual(effective['conda']['cacheDir'], str(self.path / 'custom-cache'))
+        self.assertEqual(effective['executor']['queueSize'], 1)
+        self.assertEqual(effective['process']['queue'], 'review.q')
+        self.assertEqual(effective['process']['penv'], 'review_smp')
+        self.assertEqual(effective['process']['withName:AnnotateGenomes']['conda'], str(prefix))
+        probe = self.path / 'effective.nf'
+        probe.write_text(f"workflow {{ assert workflow.workDir.toString() == '{self.path}/custom-work' }}\n")
+        run = self.nf('-C', sources, 'run', probe, '-profile', 'gzsys', '-preview')
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        # The same effective selection must reject an interrupted Conda installation.
+        (prefix / 'conda-meta/history').unlink()
+        with contextlib.redirect_stdout(io.StringIO()):
+            errors = preflight.check({}, effective)
+        self.assertTrue(any('Incomplete Conda environment' in error for error in errors))
 
     def test_sge_script_with_fake_scheduler(self):
         # Exercise Nextflow's actual SgeExecutor, capturing generated submission headers.

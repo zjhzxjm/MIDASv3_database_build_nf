@@ -78,7 +78,11 @@ for name in "${ENV_NAMES[@]}"; do
         continue
     fi
 
-    if [[ -d "${prefix}" ]] && [[ "${FORCE}" == false ]]; then
+    if [[ -d "${prefix}" && ! -f "${prefix}/conda-meta/history" && "${FORCE}" == false ]]; then
+        echo "[ERROR] Incomplete Conda environment: ${prefix}; inspect it, then use --force to rebuild." >&2
+        exit 1
+    fi
+    if [[ -f "${prefix}/conda-meta/history" ]] && [[ "${FORCE}" == false ]]; then
         echo "[SKIP]  '${name}' already exists at ${prefix}"
     else
         if [[ -d "${prefix}" ]]; then
@@ -87,6 +91,10 @@ for name in "${ENV_NAMES[@]}"; do
         fi
         echo "[BUILD] Creating '${name}' from ${yml} ..."
         conda env create -f "${yml}" --prefix "${prefix}"
+        if [[ ! -f "${prefix}/conda-meta/history" ]]; then
+            echo "[ERROR] Conda did not create a complete environment: ${prefix}" >&2
+            exit 1
+        fi
         echo "[DONE]  ${name} → ${prefix}"
     fi
 done
@@ -100,7 +108,7 @@ emit() {
     local process_name="${1}"
     local env_name="${2}"
     local prefix="${BUILT_ENV_DIR}/${env_name}"
-    if [[ -d "${prefix}" ]]; then
+    if [[ -f "${prefix}/conda-meta/history" ]]; then
         printf "    withName: '%-36s { conda = '%s' }\n" "${process_name}'" "${prefix}"
     else
         echo "    // '${process_name}' — pre-built env '${env_name}' not found; falling back to yml"
@@ -143,6 +151,6 @@ echo ""
 echo "────────────────────────────────────────────────"
 echo " Pre-built env config written to:"
 echo "   ${CONFIG_OUT}"
-echo " Nextflow will use pre-built envs automatically."
-echo " To revert: use the default conf/conda_envs.config via --conda_envs_config"
+echo " Include this file from the deployment config passed to the launcher."
+echo " To revert: remove that includeConfig from the deployment config."
 echo "────────────────────────────────────────────────"
