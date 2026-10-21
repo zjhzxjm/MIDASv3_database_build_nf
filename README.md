@@ -20,7 +20,7 @@ To save time during execution and ensure stability on HPC clusters, run the preb
 bash bin/prebuild_conda_envs.sh
 ```
 
-> **Note:** This modifies `conf/conda_envs.config`. If you want to revert to on-the-fly environment creation from YML files, re-download that file from Github.
+> **Note:** The default command modifies `conf/conda_envs.config`. To preserve the checkout, pass `--config-out /absolute/path/conda.config` and select it with `--conda_envs_config /absolute/path/conda.config`.
 
 ### 3. HPC Configuration
 
@@ -108,6 +108,112 @@ nextflow run main.nf \
 ```
 
 ---
+
+## Prome branch: gzsys-xujm
+
+Use `-profile gzsys` for this cluster. The profile selects SGE `all.q` with the
+`smp` parallel environment and uses Nextflow's native `h_rss` / `mem_free` memory
+requests. Do not combine it with the upstream `standard` profile, which contains
+Wynton-specific resource settings. The upstream Groovy DSL2 code requires
+`NXF_SYNTAX_PARSER=v1` on newer Nextflow releases; the launcher sets this explicitly.
+
+The initial limit is three concurrent jobs, with each task capped at 32 GiB,
+including retries. This is intentionally conservative because this cluster's
+`mem_free` does not reserve aggregate memory. Measure real workloads and node
+headroom before increasing concurrency or memory. A terminated task fails the
+workflow after the bounded retries; the profile does not ignore failed builds.
+
+`params.gzsys.json` is a deployment template, not evidence that its directories or
+databases already exist. It places data below `/share/data7/Project/xujm/MIDASv3`.
+Edit it for the intended run, and use absolute shared paths for the checkout,
+inputs, work, results, databases and environments. These paths must be visible
+under the same names on every selected compute node. Preserve the launch
+directory's `.nextflow` cache and shared `work` directory to resume a run.
+
+On the login node, initialize the existing runtime (verified on 2026-10-21 as
+Nextflow 26.04.0 with Java 21; package availability is still to be validated):
+
+```bash
+source /share/data7/apps/miniconda3/etc/profile.d/conda.sh
+conda activate /share/data7/apps/miniconda3/envs/nextflow
+export NXF_SYNTAX_PARSER=v1
+```
+
+Prepare a dedicated shared set of environments. This command installs packages;
+it is a deployment step and can take substantial time and disk space. Use Bash 4
+or later on Linux. The environment YAML files retain the upstream Linux builds.
+
+```bash
+bash bin/prebuild_conda_envs.sh \
+  --env-dir /share/data7/Project/xujm/MIDASv3/conda-prebuilt \
+  --config-out /share/data7/Project/xujm/MIDASv3/conda.config
+```
+
+Add `"conda_envs_config": "/share/data7/Project/xujm/MIDASv3/conda.config"` to the
+run's JSON to select those environments. Without this parameter, Nextflow creates
+environments on demand in the profile's shared Conda cache. The prebuild script
+checks out no code and submits no scheduler jobs. `--force` removes and rebuilds
+only its named environment prefixes; avoid it for environments used by live jobs.
+
+Database roots follow the existing download layout:
+
+| JSON parameter | Required content below that directory |
+|---|---|
+| `eggnog_db_dir` | `data/eggnog.db`, `data/eggnog_proteins.dmnd`, `data/eggnog.taxa.db`, `data/pfam/` |
+| `genomad_db_dir` | The extracted `genomad_db/` directory |
+| `resfinder_db_dir` | Installed `resfinder_db/` and `disinfinder_db/` directories |
+
+Reuse databases only when their tool/version compatibility and installation are
+confirmed. The preflight checks expected paths, not index integrity or scientific
+compatibility. `download_databases` defaults to `false` in this profile; a missing
+database causes a failure rather than an automatic download. Explicitly setting
+it to `true` enables the upstream database download/install processes on the
+login node. Downloading databases is separate from environment preparation.
+
+After copying the checkout and preparing the inputs and databases, run from a
+dedicated launch directory on shared storage:
+
+```bash
+# Read-only login-node checks: required commands, paths, disk space and base config.
+bash /path/to/checkout/bin/run_gzsys.sh --check /path/to/run-params.json
+
+# Validate the input TSV and compile the complete workflow; submit no jobs.
+# Nextflow writes its log/cache metadata in the launch directory.
+bash /path/to/checkout/bin/run_gzsys.sh --preview /path/to/run-params.json
+
+# Submit the real workflow only after checking all compute-node paths.
+bash /path/to/checkout/bin/run_gzsys.sh --run /path/to/run-params.json
+
+# Resume from the same launch directory with the same retained work/cache.
+bash /path/to/checkout/bin/run_gzsys.sh --run /path/to/run-params.json -resume
+```
+
+The genome TSV requires one representative per species, consistent
+`representative` values and unique genome IDs. IDs accept letters, numbers, dots,
+underscores and hyphens, starting with a letter or number. FASTA paths cannot
+contain whitespace or shell metacharacters. Relative FASTA paths are resolved
+against the launch directory; use absolute paths on the cluster. This build uses
+the MIDAS thresholds `[99, 95, 90, 85, 80, 75]` because downstream code assumes the
+99% primary clustering level.
+
+A successful preview or accepted SGE job is not acceptance of a database build.
+First run the bundled four-genome/two-species example using a separate output and
+work directory. Verify every expected genome and species, marker indexes,
+`genes_info.tsv`, `centroids.ffn`, cluster information/annotation tables and chunk
+JSON files, and inspect the trace for failed or missing tasks before a larger
+build. The profile writes timestamped trace, HTML report and timeline files in
+the launch directory. The separate `modules/rarefaction.nf` workflow is outside
+this cluster adaptation's acceptance scope.
+
+Local regression checks (no downloads or real scheduler jobs):
+
+```bash
+NXF_OFFLINE=true python3 -m unittest discover -s testing/tests -v
+```
+
+These checks compile the workflow, exercise representative-input failures and
+inspect a real Nextflow-generated SGE submission script through a fake scheduler.
+They do not replace a Linux Conda environment build or a biological end-to-end run.
 
 ## Citation
 

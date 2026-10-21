@@ -1,59 +1,57 @@
 def check_input(genomes_tsv_path) {
-
-    new File(genomes_tsv_path).withReader { reader ->
+    def input = new File(genomes_tsv_path.toString())
+    if (!input.isFile() || !input.canRead()) {
+        throw new IllegalArgumentException("Cannot read genome TSV: ${input}")
+    }
+    def expectedColumns = ['genome', 'species', 'representative', 'genome_is_representative', 'fasta_path']
+    def speciesMap = [:].withDefault { [genomes: [], representatives: [], declared: []] }
+    def genomeSet = new HashSet()
+    input.withReader { reader ->
         def header = reader.readLine()
-        def columns = header.split("\t")
-        def expectedColumns = ["genome", "species", "representative", "genome_is_representative", "fasta_path"]
-
-        // Check that columns are expected
-        if (columns.size() != expectedColumns.size()) {
-            throw new IllegalStateException("Error: File at ${genomes_tsv_path} \
-            does not have exactly ${expectedColumns.size()} columns")
+        if (header == null || header.split('\t', -1).toList() != expectedColumns) {
+            throw new IllegalArgumentException("Expected TSV headers: ${expectedColumns.join(', ')}")
         }
-        if (!columns.equals(expectedColumns)) {
-            throw new IllegalStateException("Error: Column headers do not \
-            match expected headers: ${expectedColumns.join(", ")}")
-        }
-
-        def speciesMap = [:].withDefault { [representativeCount: 0, totalCount: 0] }
-        def genomeSet = new HashSet()
-
         reader.eachLine { line ->
-            def fields = line.split("\t")
-            if (fields.size() != expectedColumns.size()) {
-                throw new IllegalStateException("Error: Inconsistent number of columns in line: ${line}")
+            def fields = line.split('\t', -1)
+            if (fields.size() != 5 || fields.any { !it || it != it.trim() }) {
+                throw new IllegalArgumentException("Expected five nonempty fields without surrounding whitespace: ${line}")
             }
-            
-            def genome = fields[0]
-            def species = fields[1]
-            def genomeIsRepresentative = fields[3] as Integer
-            def fastaPath = new File(fields[4])
-
-            // Check that all genome names are unique
+            def (genome, species, representative, isRepresentative, fasta) = fields
+            [genome, species, representative].each { id ->
+                if (!(id ==~ /[A-Za-z0-9][A-Za-z0-9_.-]*/)) {
+                    throw new IllegalArgumentException("Unsafe genome/species identifier: ${id}")
+                }
+            }
+            if (!(isRepresentative in ['0', '1'])) {
+                throw new IllegalArgumentException("genome_is_representative must be 0 or 1: ${genome}")
+            }
             if (!genomeSet.add(genome)) {
-                throw new IllegalStateException("Error: Duplicate genome ID found: ${genome}")
+                throw new IllegalArgumentException("Duplicate genome ID: ${genome}")
             }
-            
-            // Check that genome name is POSIX compliant
-            if (genome.contains("/") || genome.contains("\0")) {
-                throw new IllegalStateException("Error: Genome name contains illegal characters: ${genome}")
+            // Relative paths retain the original contract: relative to the launch directory.
+            def fastaPath = new File(fasta)
+            if (!fastaPath.isFile() || !fastaPath.canRead() || fastaPath.length() == 0) {
+                throw new IllegalArgumentException("Missing, unreadable or empty FASTA for ${genome}: ${fasta}")
             }
-
-            // Count number of representative genomes per species
-            speciesMap[species].totalCount++
-            if (genomeIsRepresentative == 1) {
-                speciesMap[species].representativeCount++
+            // Existing external-tool command lines require paths without shell metacharacters.
+            if (!(fastaPath.absolutePath ==~ /[A-Za-z0-9_\/.+-]+/)) {
+                throw new IllegalArgumentException("FASTA path contains unsupported characters: ${fasta}")
             }
-
-            // Check that genome fasta file exists and is not empty
-            if (!fastaPath.exists()) {
-                throw new IllegalArgumentException("File not found for genome: ${genome} at ${fastaPath}")
-            }        
-            if (fastaPath.length() == 0) {
-                throw new IllegalArgumentException("File is empty: ${fastaPath}")
-            }
+            speciesMap[species].genomes << genome
+            speciesMap[species].declared << representative
+            if (isRepresentative == '1') speciesMap[species].representatives << genome
         }
-        
+    }
+    if (genomeSet.isEmpty()) {
+        throw new IllegalArgumentException('Genome TSV contains no genomes.')
+    }
+    speciesMap.each { species, group ->
+        if (group.representatives.size() != 1) {
+            throw new IllegalArgumentException("Species ${species} must have exactly one representative; found ${group.representatives.size()}.")
+        }
+        def representative = group.representatives[0]
+        if (group.declared.any { it != representative }) {
+            throw new IllegalArgumentException("Species ${species}: representative must be ${representative} on every row.")
+        }
     }
 }
-
