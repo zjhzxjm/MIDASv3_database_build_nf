@@ -145,8 +145,11 @@ export NXF_SYNTAX_PARSER=v1
 Prepare a dedicated shared set of environments. This command installs packages;
 it is a deployment step and can take substantial time and disk space. Use Bash 4
 or later on Linux. Existing analysis-tool version constraints are retained.
-The EggNOG `c-ares` build is pinned to `1.34.6=hb03c661_0`, validated with EggNOG 2.1.12 and
-DIAMOND 2.1.9 on gzsys glibc 2.17. The package download cache below is separate
+The EggNOG and geNomad environments pin `c-ares` to `1.34.6=hb03c661_0`. Their full
+environments were separately solved, installed, and checked on gzsys glibc 2.17,
+retaining EggNOG 2.1.12, DIAMOND 2.1.9, geNomad 1.7.0, and all other dependency
+constraints. These environment checks do not establish reference-database annotation
+or full SGE pipeline acceptance. The package download cache below is separate
 from the environment prefixes; use a user-writable cache to avoid permission
 errors on partial downloads in the shared Miniconda installation.
 
