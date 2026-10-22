@@ -108,7 +108,8 @@ def main():
         if not shutil.which(executable):
             errors.append(f'{executable} is not available on PATH')
     if shutil.which('java'):
-        result = subprocess.run(['java', '-version'], capture_output=True, text=True)
+        result = subprocess.run(['java', '-version'], stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, universal_newlines=True)
         version = re.search(r'version "(\d+)', result.stderr + result.stdout)
         if result.returncode or not version or int(version[1]) < 17:
             errors.append('Java 17 or later is required; use the shared Nextflow runtime.')
