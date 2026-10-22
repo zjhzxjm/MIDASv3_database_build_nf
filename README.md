@@ -144,9 +144,14 @@ export NXF_SYNTAX_PARSER=v1
 
 Prepare a dedicated shared set of environments. This command installs packages;
 it is a deployment step and can take substantial time and disk space. Use Bash 4
-or later on Linux. The environment YAML files retain the upstream Linux builds.
+or later on Linux. Existing analysis-tool version constraints are retained.
+The EggNOG `c-ares` build is pinned to `1.34.6=hb03c661_0`, validated with EggNOG 2.1.12 and
+DIAMOND 2.1.9 on gzsys glibc 2.17. The package download cache below is separate
+from the environment prefixes; use a user-writable cache to avoid permission
+errors on partial downloads in the shared Miniconda installation.
 
 ```bash
+CONDA_PKGS_DIRS=/share/data7/Project/xujm/MIDASv3/conda-pkgs \
 bash bin/prebuild_conda_envs.sh \
   --env-dir /share/data7/Project/xujm/MIDASv3/conda-prebuilt \
   --config-out /share/data7/Project/xujm/MIDASv3/conda.config
