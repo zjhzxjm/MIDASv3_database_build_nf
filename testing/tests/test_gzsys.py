@@ -61,7 +61,7 @@ class PrebuildTests(unittest.TestCase):
             fakebin = root / 'bin'
             fakebin.mkdir()
             conda = fakebin / 'conda'
-            conda.write_text('#!/bin/bash\nwhile [[ $# -gt 0 ]]; do\nif [[ "$1" == --prefix ]]; then mkdir -p "$2/conda-meta"; touch "$2/conda-meta/history"; exit 0; fi\nshift\ndone\nexit 1\n')
+            conda.write_text('#!/bin/bash\nwhile [[ $# -gt 0 ]]; do\nif [[ "$1" == --prefix ]]; then mkdir -p "$2/conda-meta" "$2/bin"; touch "$2/conda-meta/history"; printf "#!/bin/bash\\nexit ${FAKE_PIP_EXIT:-0}\\n" > "$2/bin/python"; chmod +x "$2/bin/python"; exit 0; fi\nshift\ndone\nexit 1\n')
             conda.chmod(0o755)
             config = root / 'shared.config'
             original = (ROOT / 'conf/conda_envs.config').read_bytes()
@@ -73,6 +73,17 @@ class PrebuildTests(unittest.TestCase):
             self.assertEqual((ROOT / 'conf/conda_envs.config').read_bytes(), original)
             self.assertIn("withName: 'ClusterCentroidsLowerThresholds'", config.read_text())
             self.assertIn(str(root / 'envs/prokka'), config.read_text())
+            # Conda history exists even when the pip stage failed. Never skip it.
+            before = config.read_bytes()
+            pip_python = root / 'envs/resfinder/bin/python'
+            pip_python.write_text('#!/bin/bash\nexit 1\n')
+            broken = subprocess.run(['bash', str(ROOT / 'bin/prebuild_conda_envs.sh'),
+                                    '--env-dir', str(root / 'envs'), '--config-out', str(config)],
+                                   env=env, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(broken.returncode, 0)
+            self.assertIn('Incomplete pip environment', broken.stderr)
+            self.assertEqual(config.read_bytes(), before)
+            pip_python.write_text('#!/bin/bash\nexit 0\n')
             # Simulate an interrupted install. It must not be reused or overwrite the config.
             before = config.read_bytes()
             (root / 'envs/python-bio/conda-meta/history').unlink()
@@ -82,8 +93,51 @@ class PrebuildTests(unittest.TestCase):
             self.assertNotEqual(repeated.returncode, 0)
             self.assertIn('Incomplete Conda environment', repeated.stderr)
             self.assertEqual(config.read_bytes(), before)
+            # Even a successful Conda command cannot publish a new prefix with
+            # an incomplete pip stage or overwrite the prior deployment config.
+            fresh = subprocess.run(['bash', str(ROOT / 'bin/prebuild_conda_envs.sh'),
+                                    '--env-dir', str(root / 'fresh'), '--config-out', str(config)],
+                                   env=dict(env, FAKE_PIP_EXIT='1'), capture_output=True,
+                                   text=True, timeout=10)
+            self.assertNotEqual(fresh.returncode, 0)
+            self.assertIn('Incomplete pip environment', fresh.stderr)
+            self.assertNotIn('[DONE]', fresh.stdout)
+            self.assertEqual(config.read_bytes(), before)
 
 
+
+class PipIntegrityTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location('check_conda_pip', ROOT / 'bin/check_conda_pip.py')
+        cls.checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.checker)
+
+    def test_repository_pip_lists_and_missing_or_wrong_versions(self):
+        checker = self.checker
+        requirements = checker.pip_requirements((ROOT / 'env/resfinder.yml').read_text())
+        self.assertEqual(len(requirements), 6)
+        versions = {r.name: str(r.specifier)[2:] for r in requirements}
+        self.assertEqual(checker.requirement_errors(requirements, versions.__getitem__), [])
+        versions['resfinder'] = '4.7.2'
+        self.assertIn('Pip version mismatch', checker.requirement_errors(requirements, versions.__getitem__)[0])
+        def missing(name):
+            raise checker.importlib.metadata.PackageNotFoundError(name)
+        self.assertEqual(len(checker.requirement_errors(requirements, missing)), 6)
+        # Both conventional and indentless YAML lists are present in this repo.
+        self.assertEqual(len(checker.pip_requirements((ROOT / 'env/prokka.yml').read_text())), 2)
+        self.assertEqual(len(checker.pip_requirements((ROOT / 'env/python-bio.yml').read_text())), 3)
+
+    def test_conflicting_transitive_dependencies_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            yml = Path(directory) / 'env.yml'
+            yml.write_text('dependencies:\n  - pip:\n    - example==1.0\n')
+            checker = self.checker
+            with patch.object(checker.sys, 'argv', ['check_conda_pip.py', str(yml)]), \
+                 patch.object(checker, 'requirement_errors', return_value=[]), \
+                 patch.object(checker.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)) as run:
+                self.assertEqual(checker.main(), 1)
+            self.assertEqual(run.call_args.args[0][-2:], ['pip', 'check'])
 
 class PipelineFailureTests(unittest.TestCase):
     def test_cdhit_failure_stops_before_success_marker(self):

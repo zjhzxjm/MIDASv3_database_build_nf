@@ -153,6 +153,11 @@ or full SGE pipeline acceptance. The package download cache below is separate
 from the environment prefixes; use a user-writable cache to avoid permission
 errors on partial downloads in the shared Miniconda installation.
 
+The ResFinder pip stack pins ResFinder 4.6.0, MobileElementFinder 1.1.2,
+cgecore 1.5.6, Biopython 1.80, pandas 2.2.3 and NumPy 1.26.4. This avoids the
+incompatible Biopython requirements of ResFinder 4.7.2/cgecore 2.0.1 and
+MobileElementFinder 1.1.2, and uses a pandas wheel compatible with glibc 2.17.
+
 ```bash
 CONDA_PKGS_DIRS=/share/data7/Project/xujm/MIDASv3/conda-pkgs \
 bash bin/prebuild_conda_envs.sh \
@@ -163,9 +168,13 @@ bash bin/prebuild_conda_envs.sh \
 Uncomment `includeConfig '/share/data7/Project/xujm/MIDASv3/conda.config'` in the
 run's deployment config to select those environments. Without that include,
 Nextflow creates environments on demand in the shared Conda cache. Existing
-prefixes must contain `conda-meta/history`; incomplete prefixes cause a failure
-and are preserved for inspection. Rebuilding them requires an explicit `--force`. The prebuild script
-checks out no code and submits no scheduler jobs. `--force` removes and rebuilds
+prefixes must contain `conda-meta/history`. For YAMLs with pip dependencies, the
+prebuild script also checks that every declared pip package is installed at an
+allowed version and that `pip check` succeeds, both before reuse and after creation.
+A failed pip install can leave Conda history behind; that prefix is rejected and
+the existing deployment config is preserved. Repair the named prefix, or move it
+to a backup path before rerunning. Rebuilding in place requires an explicit
+`--force`. The prebuild script checks out no code and submits no scheduler jobs. `--force` removes and rebuilds
 only its named environment prefixes; avoid it for environments used by live jobs.
 
 Database roots follow the existing download layout:

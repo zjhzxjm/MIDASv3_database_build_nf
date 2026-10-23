@@ -66,6 +66,18 @@ declare -A ENV_YMLS=(
     [resfinder]="${ENV_SRC_DIR}/resfinder.yml"
 )
 
+# A Conda transaction can succeed before its pip transaction fails. Validate
+# declared pip packages and their dependency graph before reuse and publication.
+check_pip() {
+    local prefix="$1" yml="$2"
+    if grep -Eq '^[[:space:]]*-[[:space:]]+pip:' "$yml"; then
+        if ! "$prefix/bin/python" "${SCRIPT_DIR}/bin/check_conda_pip.py" "$yml"; then
+            echo "[ERROR] Incomplete pip environment: $prefix; repair it or move this prefix aside before retrying. Existing environments/config are preserved." >&2
+            return 1
+        fi
+    fi
+}
+
 # ── Build envs ────────────────────────────────────────────────────────────────
 mkdir -p "${BUILT_ENV_DIR}"
 
@@ -83,6 +95,7 @@ for name in "${ENV_NAMES[@]}"; do
         exit 1
     fi
     if [[ -f "${prefix}/conda-meta/history" ]] && [[ "${FORCE}" == false ]]; then
+        check_pip "$prefix" "$yml"
         echo "[SKIP]  '${name}' already exists at ${prefix}"
     else
         if [[ -d "${prefix}" ]]; then
@@ -95,6 +108,7 @@ for name in "${ENV_NAMES[@]}"; do
             echo "[ERROR] Conda did not create a complete environment: ${prefix}" >&2
             exit 1
         fi
+        check_pip "$prefix" "$yml"
         echo "[DONE]  ${name} → ${prefix}"
     fi
 done
