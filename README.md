@@ -118,7 +118,9 @@ Wynton-specific resource settings. The upstream Groovy DSL2 code requires
 `NXF_SYNTAX_PARSER=v1` on newer Nextflow releases; the launcher sets this explicitly.
 
 The initial limit is three concurrent jobs, with each task capped at 32 GiB,
-including retries. This is intentionally conservative because this cluster's
+including retries. `RunGeNomad` requests 32 GiB from its first attempt; the
+four-genome SGE sample reported approximately 18.5 GB peak RSS per geNomad task.
+This is intentionally conservative because this cluster's
 `mem_free` does not reserve aggregate memory. Measure real workloads and node
 headroom before increasing concurrency or memory. A terminated task fails the
 workflow after the bounded retries; the profile does not ignore failed builds.

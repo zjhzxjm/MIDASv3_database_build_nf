@@ -231,6 +231,7 @@ class NextflowTests(unittest.TestCase):
         self.assertIn("process.executor = 'sge'", result.stdout)
         self.assertIn("process.penv = 'smp'", result.stdout)
         self.assertIn('executor.queueSize = 3', result.stdout)
+        self.assertIn("process.'withName:RunGeNomad'.memory = '32 GB'", result.stdout)
         self.assertNotIn('h_vmem', result.stdout)
         self.assertNotIn('h_rss=', result.stdout)  # emitted by SgeExecutor, not clusterOptions
         self.assertNotIn('WARN:', result.stdout + result.stderr)
@@ -282,7 +283,7 @@ includeConfig '{external}'
         self.env['PATH'] = str(fakebin) + os.pathsep + self.env['PATH']
         self.env['MIDAS_CAPTURE'] = str(self.path / 'submitted.sh')
         workflow = self.path / 'probe.nf'
-        workflow.write_text('''process Probe {
+        workflow.write_text('''process RunGeNomad {
     label 'mem_high'
     conda false
     output:
@@ -290,7 +291,7 @@ includeConfig '{external}'
     script:
     "echo ok > ok.txt"
 }
-workflow { Probe() }
+workflow { RunGeNomad() }
 ''')
         config = self.path / 'probe.config'
         config.write_text(f"includeConfig '{ROOT}/conf/gzsys.config'\nworkDir = '{self.path}/work'\nconda.enabled = false\nexecutor.pollInterval = '1 sec'\n")
@@ -299,7 +300,7 @@ workflow { Probe() }
         script = (self.path / 'submitted.sh').read_text()
         self.assertIn('#$ -q all.q', script)
         self.assertIn('#$ -pe smp 8', script)
-        self.assertIn('h_rss=16384M,mem_free=16384M', script)
+        self.assertIn('h_rss=32768M,mem_free=32768M', script)
         self.assertNotIn('h_vmem', script)
         self.assertEqual(script.count('h_rss='), 1)
 
