@@ -1,0 +1,9 @@
+.nextflow*
+work/
+.env/
+.conda_envs/
+__pycache__/
+*.pyc
+trace-*.tsv
+report-*.html
+timeline-*.html

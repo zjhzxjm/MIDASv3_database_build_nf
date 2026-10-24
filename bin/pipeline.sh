@@ -1,5 +1,6 @@
+#!/usr/bin/env bash
 # Chunyu Zhao 2023-06-14
-#! /usr/bin/bash
+set -euo pipefail
 
 species_id=$1
 genes_info=$2
@@ -111,7 +112,7 @@ if [[ ! -e "${cdhit_centroids_tsv}" ]]; then
   grep ">" cdhit_centroids_upper.ffn | cut -d'>' -f2 > list_of_cdhit_centroids_by_ffn
   cut -f2 new_centroids.tsv | sort | uniq > list_of_cdhit_centroids_by_tsv
   # If detect inconsistent centroids assignments:
-  mislabled_centroids=$(grep -Fvwf list_of_cdhit_centroids_by_tsv list_of_cdhit_centroids_by_ffn)
+  mislabled_centroids=$(grep -Fvwf list_of_cdhit_centroids_by_tsv list_of_cdhit_centroids_by_ffn || true)
   if [ -n "$mislabled_centroids" ]; then
     # loop over the problematic centroids
     while read -r xx; do
