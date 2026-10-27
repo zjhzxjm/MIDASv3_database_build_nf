@@ -41,13 +41,13 @@ class PreflightTests(unittest.TestCase):
                 errors = preflight.check(params, self.effective())
         self.assertTrue(any('database component' in error for error in errors))
 
-    def test_concurrency_above_twelve_rejected(self):
+    def test_concurrency_above_twenty_four_rejected(self):
         params = {name: '/share/midas-test/missing' for name in (
             'db_output_dir', 'eggnog_db_dir', 'genomad_db_dir',
             'resfinder_db_dir', 'genomes_tsv_path')}
         params.update(download_databases=True)
         effective = self.effective()
-        effective['executor']['queueSize'] = 13
+        effective['executor']['queueSize'] = 25
         with patch.object(preflight.shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(1, 0, 200 * 1024**3)):
             with contextlib.redirect_stdout(io.StringIO()):
                 errors = preflight.check(params, effective)
@@ -58,7 +58,7 @@ class PreflightTests(unittest.TestCase):
             'db_output_dir', 'eggnog_db_dir', 'genomad_db_dir',
             'resfinder_db_dir', 'genomes_tsv_path')}
         params['download_databases'] = True
-        for limit, accepted in ((12, True), (0, False), (13, False), (True, False)):
+        for limit, accepted in ((12, True), (24, True), (0, False), (25, False), (True, False)):
             with self.subTest(limit=limit):
                 effective = self.effective()
                 effective['executor']['$sge'] = {'queueSize': limit}
@@ -69,7 +69,7 @@ class PreflightTests(unittest.TestCase):
                 concurrency_errors = [e for e in errors if 'executor.$sge.queueSize' in e]
                 self.assertEqual(not concurrency_errors, accepted)
                 if accepted:
-                    self.assertIn('"queueSize": 12', output.getvalue())
+                    self.assertIn(f'"queueSize": {limit}', output.getvalue())
 
     def test_reports_each_database_path(self):
         params = {name: '/share/midas-test/' + name for name in (

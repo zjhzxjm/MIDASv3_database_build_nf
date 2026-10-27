@@ -27,8 +27,8 @@ def check(params, effective):
     sge_queue_size = executor.get('$sge', {}).get('queueSize', queue_size)
     for name, value in (('executor.queueSize', queue_size),
                         ('executor.$sge.queueSize', sge_queue_size)):
-        if type(value) is not int or not 1 <= value <= 12:
-            errors.append(f'Effective {name} must be between 1 and 12')
+        if type(value) is not int or not 1 <= value <= 24:
+            errors.append(f'Effective {name} must be between 1 and 24')
     if process.get('executor') != 'sge' or not process.get('queue') or not process.get('penv'):
         errors.append('Effective executor/queue/penv must select an SGE queue and parallel environment')
     if effective.get('conda', {}).get('enabled') is not True:
