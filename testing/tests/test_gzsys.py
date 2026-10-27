@@ -41,17 +41,47 @@ class PreflightTests(unittest.TestCase):
                 errors = preflight.check(params, self.effective())
         self.assertTrue(any('database component' in error for error in errors))
 
-    def test_large_concurrency_rejected_for_initial_acceptance(self):
+    def test_concurrency_above_twelve_rejected(self):
         params = {name: '/share/midas-test/missing' for name in (
             'db_output_dir', 'eggnog_db_dir', 'genomad_db_dir',
             'resfinder_db_dir', 'genomes_tsv_path')}
         params.update(download_databases=True)
         effective = self.effective()
-        effective['executor']['queueSize'] = 12
+        effective['executor']['queueSize'] = 13
         with patch.object(preflight.shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(1, 0, 200 * 1024**3)):
             with contextlib.redirect_stdout(io.StringIO()):
                 errors = preflight.check(params, effective)
         self.assertTrue(any('executor.queueSize' in error for error in errors))
+
+    def test_sge_specific_concurrency_limit(self):
+        params = {name: '/share/midas-test/missing' for name in (
+            'db_output_dir', 'eggnog_db_dir', 'genomad_db_dir',
+            'resfinder_db_dir', 'genomes_tsv_path')}
+        params['download_databases'] = True
+        for limit, accepted in ((12, True), (0, False), (13, False), (True, False)):
+            with self.subTest(limit=limit):
+                effective = self.effective()
+                effective['executor']['$sge'] = {'queueSize': limit}
+                output = io.StringIO()
+                with patch.object(preflight.shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(1, 0, 200 * 1024**3)):
+                    with contextlib.redirect_stdout(output):
+                        errors = preflight.check(params, effective)
+                concurrency_errors = [e for e in errors if 'executor.$sge.queueSize' in e]
+                self.assertEqual(not concurrency_errors, accepted)
+                if accepted:
+                    self.assertIn('"queueSize": 12', output.getvalue())
+
+    def test_reports_each_database_path(self):
+        params = {name: '/share/midas-test/' + name for name in (
+            'db_output_dir', 'eggnog_db_dir', 'genomad_db_dir',
+            'resfinder_db_dir', 'genomes_tsv_path')}
+        params['download_databases'] = True
+        output = io.StringIO()
+        with patch.object(preflight.shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(1, 0, 200 * 1024**3)):
+            with contextlib.redirect_stdout(output):
+                preflight.check(params, self.effective())
+        for name in ('db_output_dir', 'eggnog_db_dir', 'genomad_db_dir', 'resfinder_db_dir'):
+            self.assertIn(f'{name}: {params[name]} (free ', output.getvalue())
 
 
 class PrebuildTests(unittest.TestCase):
