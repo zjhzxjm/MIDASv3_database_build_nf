@@ -22,14 +22,18 @@ def check(params, effective):
         if not isinstance(value, str) or not value.startswith('/share/') or not re.fullmatch(r'[A-Za-z0-9_/.+-]+', value):
             errors.append(f'Effective {name} must be an absolute /share/ path without shell metacharacters')
     process = effective.get('process', {})
-    queue_size = effective.get('executor', {}).get('queueSize')
-    if type(queue_size) is not int or not 1 <= queue_size <= 3:
-        errors.append('Effective executor.queueSize must be between 1 and 3 for initial acceptance')
+    executor = effective.get('executor', {})
+    queue_size = executor.get('queueSize')
+    sge_queue_size = executor.get('$sge', {}).get('queueSize', queue_size)
+    for name, value in (('executor.queueSize', queue_size),
+                        ('executor.$sge.queueSize', sge_queue_size)):
+        if type(value) is not int or not 1 <= value <= 12:
+            errors.append(f'Effective {name} must be between 1 and 12')
     if process.get('executor') != 'sge' or not process.get('queue') or not process.get('penv'):
         errors.append('Effective executor/queue/penv must select an SGE queue and parallel environment')
     if effective.get('conda', {}).get('enabled') is not True:
         errors.append('Effective conda.enabled must be true')
-    print('Effective execution:', json.dumps({**execution_paths, 'queueSize': queue_size,
+    print('Effective execution:', json.dumps({**execution_paths, 'queueSize': sge_queue_size,
           'queue': process.get('queue'), 'penv': process.get('penv')}, sort_keys=True))
     conda_selections = {name: value.get('conda') for name, value in process.items()
                         if isinstance(value, dict) and value.get('conda') is not None}
@@ -62,7 +66,7 @@ def check(params, effective):
             ancestor = ancestor.parent
         minimum = float(params.get('gzsys_min_free_gb', 100))
         free_gb = shutil.disk_usage(ancestor).free / 1024**3
-        print(f'{name}: {value} (free {free_gb:.1f} GiB)')
+        print(f'{name}: {params[name]} (free {free_gb:.1f} GiB)')
         if free_gb < minimum:
             errors.append(f'{name}: less than required {minimum:g} GiB free')
 
