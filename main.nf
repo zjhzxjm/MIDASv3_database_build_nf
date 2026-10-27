@@ -1,44 +1,52 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl=2
 
-// --- Parameters & Path Setup ---
+// Validate before creating outputs or scheduling database preparation.
+include { check_input } from './modules/check_input'
+if (!params.genomes_tsv_path) {
+    error 'Provide --genomes_tsv_path or genomes_tsv_path in the parameters JSON.'
+}
+check_input(params.genomes_tsv_path)
+if (params.centroid_cluster_percents != [99, 95, 90, 85, 80, 75]) {
+    error 'MIDAS build currently requires centroid_cluster_percents [99, 95, 90, 85, 80, 75].'
+}
+if (!(params.db_name ==~ /[A-Za-z0-9][A-Za-z0-9_.-]*/)) {
+    error 'db_name must contain only letters, numbers, underscores, dots and hyphens.'
+}
 params.max_cluster_val = params.centroid_cluster_percents.max()
+params.db_path = file("${params.db_output_dir}/${params.db_name}").toAbsolutePath().normalize().toString()
+params.marker_model_hmm_path = "${projectDir}/bin/markers_models/${params.marker_set}/marker_genes.hmm"
+file(params.marker_model_hmm_path, checkIfExists: true)
 
-// Ensure directories end with trailing "/" characters and standardize paths
-params.findAll { key, _ -> key.endsWith("_dir")}
-    .each { key, path ->
-        if (!path.endsWith("/")) {
-            params[key.replace("_dir", "_path")] = "${path}/"
-        } else {
-            params[key.replace("_dir", "_path")] = "${path}"
-        }
-    }
-
-params.db_path = "${params.db_output_dir}/${params.db_name}/"
-params.marker_model_hmm_path = "${baseDir}/bin/markers_models/${params.marker_set}/marker_genes.hmm"
-
-// Ensure the main output directory exists
-def output_db = file(params.db_path)
-if (!output_db.exists()) {
-    output_db.mkdirs()
+// Database roots are absolute so work-directory staging never changes their meaning.
+['eggnog_db_dir', 'genomad_db_dir', 'resfinder_db_dir'].each { key ->
+    params[key] = file(params[key]).toAbsolutePath().normalize().toString()
 }
 
 // ---------------------------------------------------------
 // INCLUDE MODULES
 // ---------------------------------------------------------
-include { check_input } from './modules/check_input'
 include { ClusterCentroids as ClusterCentroids } from './modules/cluster_centroids'
 include { ClusterCentroids as ClusterCentroidsLowerThresholds } from './modules/cluster_centroids'
 
 workflow {
 
     //// 1. PREPARE DATABASES (Downloads only if missing)
-    DownloadGeNomadDB()
-    DownloadEggNogDB()
-    DownloadResFinderDB()
-
-    //// 2. CHECK INPUT FILE FORMATTING
-    check_input(params.genomes_tsv_path)
+    if (params.download_databases) {
+        DownloadGeNomadDB()
+        DownloadEggNogDB()
+        DownloadResFinderDB()
+        // Processes without queue inputs emit reusable value channels.
+        genomad_db = DownloadGeNomadDB.out.db
+        eggnog_db = DownloadEggNogDB.out.db
+        resfinder_db = DownloadResFinderDB.out.res_db
+        disinfinder_db = DownloadResFinderDB.out.dis_db
+    } else {
+        genomad_db = Channel.value(file("${params.genomad_db_dir}/genomad_db", checkIfExists: true))
+        eggnog_db = Channel.value(file("${params.eggnog_db_dir}/data", checkIfExists: true))
+        resfinder_db = Channel.value(file("${params.resfinder_db_dir}/resfinder_db", checkIfExists: true))
+        disinfinder_db = Channel.value(file("${params.resfinder_db_dir}/disinfinder_db", checkIfExists: true))
+    }
 
     genomes = Channel
         .fromPath(params.genomes_tsv_path)
@@ -84,10 +92,7 @@ workflow {
     ClusterCentroids(max_cluster_ch)
         .set {max_cluster_output}
 
-    CleanCentroids(
-        max_cluster_output.centroid_ffn,
-        max_cluster_output.cluster_pct
-    )
+    CleanCentroids(max_cluster_output.centroid_ffn)
 
     remaining_clusters_list = params.centroid_cluster_percents.findAll {it != params.max_cluster_val}
     Channel
@@ -138,13 +143,13 @@ workflow {
     )
 
     //// 7. FUNCTIONAL ANNOTATION (Linked to Corrected DB Paths)
-    RunEggNog(RefineClusters.out.centroid_ffn, DownloadEggNogDB.out.db)
-    RunGeNomad(AnnotateGenomes.out.fna_tuple, DownloadGeNomadDB.out.db)
+    RunEggNog(RefineClusters.out.centroid_ffn, eggnog_db)
+    RunGeNomad(AnnotateGenomes.out.fna_tuple, genomad_db)
     
     RunResFinder(
         AnnotateGenomes.out.fna_tuple, 
-        DownloadResFinderDB.out.res_db, 
-        DownloadResFinderDB.out.dis_db
+        resfinder_db,
+        disinfinder_db
     )
 
     //// 8. COMBINE RESULTS
@@ -333,12 +338,11 @@ process CleanCentroids {
 
     input:
     tuple val(species), path(centroid_ffn)
-    val(cluster_pct)
 
     output:
     tuple val(species), \
-        path("centroids.${cluster_pct}.clean.ffn"), \
-        path("centroids.${cluster_pct}.ambiguous.ffn"), emit: cleaned_centroids
+        path("centroids.${params.max_cluster_val}.clean.ffn"), \
+        path("centroids.${params.max_cluster_val}.ambiguous.ffn"), emit: cleaned_centroids
 
     script:
     """

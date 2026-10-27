@@ -1,0 +1,10 @@
+{
+    "genomes_tsv_path": "/share/data7/Project/xujm/MIDASv3/inputs/genomes.tsv",
+    "db_name": "prome_midas",
+    "db_output_dir": "/share/data7/Project/xujm/MIDASv3/results",
+    "eggnog_db_dir": "/share/data7/Project/xujm/MIDASv3/databases/eggnog",
+    "genomad_db_dir": "/share/data7/Project/xujm/MIDASv3/databases/genomad",
+    "resfinder_db_dir": "/share/data7/Project/xujm/MIDASv3/databases/resfinder",
+    "download_databases": false,
+    "gzsys_min_free_gb": 100
+}
